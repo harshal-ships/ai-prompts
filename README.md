@@ -1,168 +1,200 @@
-Hello all! Manual clinic reservation channels create high operational friction, prolonged hold times, and scheduling inefficiencies. Traditional touch-tone phone menus fail to process natural speech, leading to frequent call abandonment, data entry errors, and poor schedule capacity utilization.
+# ContinueCare.ai — Demo Script (~7 minutes)
 
-This tutorial resolves these friction points by deploying an autonomous clinic receptionist voice system named Claudia. The architecture uses the Telcoflow SDK to stream full-duplex telephony audio and hooks it directly into Gemini Live to run snappy, real-time voice conversations. We are explicitly avoiding complex, heavy middleware frameworks like the Google Agent Development Kit, keeping the audio layer perfectly lightweight. Once the call ends, automated post-call workflows process the transcript through OpenClaw to extract details, write to the calendar via the gog CLI, and push confirmation summaries directly to WhatsApp, removing administrative overhead entirely.
+Use **two browser windows**: Tab A = Patient, Tab B = Doctor (incognito is fine).
 
-Every developer diving into Voice AI eventually runs into the exact same realization: voice processing is probabilistic, but backend database writes must remain entirely deterministic.
+**Before you start**
+```bash
+# Terminal 1
+cd backend && source venv/bin/activate && uvicorn app.main:app --reload --port 8000
 
-If you build a monolithic voice agent where your live voice model attempts to query calendar APIs, parse open slots, and trigger messaging webhooks mid-conversation, things will fall apart. A tiny spike in network latency or a temporary endpoint timeout causes awkward silences inside the phone line. Even worse, if the voice engine hallucinates an open availability window before real confirmation takes place, you end up promising a busy slot to a customer.
+# Terminal 2
+cd frontend && npm run dev
+```
+Open http://localhost:5173
 
-The solution is full architectural decoupling. Let your voice interface focus purely on a natural, snappy conversation. The moment the user hangs up, hand off the recorded transcript to an automated background workflow that handles validation, schedules the appointment, and dispatches text confirmations calmly in a separate execution phase.
+> **Note:** The first patient message takes 15–30 seconds while Cognee builds the knowledge graph.
 
-## 1\. The Decoupled Integration Layout
+---
 
-To shield the active speech channel from downstream fulfillment processing drops, data collection is handled independently from final ledger orchestration:
+## Act 1 — The Problem (30 sec, talk track)
 
-![](https://cdn.hashnode.com/uploads/covers/650a840758b09d1fee8d8588/7424d683-99d2-4ab0-ad4c-56fbc94bc3d8.jpg align="center")
+**Say:**
+> "Patients repeat the same story every visit. Doctors don't see trends over weeks. Chat history is linear — it can't connect headaches, sleep, meds, and mood. ContinueCare.ai uses Cognee to build an evolving knowledge graph per patient."
 
-## 2\. Step-by-Step Integration
+---
 
-### Step 2.1: Prepare Your Server Environment
+## Act 2 — Patient builds memory (3 min)
 
-Log in to your Ubuntu cloud instance via SSH, refresh your package managers, and confirm Python 3.12 along with core development dependencies are installed:
+**Tab A → Register → Patient**
 
-```shell
-sudo apt update && sudo apt upgrade -y
-sudo apt install software-properties-common -y
-sudo add-apt-repository ppa:deadsnakes/ppa -y
-sudo apt update
-sudo apt install python3.12 python3.12-venv python3.12-dev -y
+| Field | Value |
+|-------|-------|
+| Name | Alex Morgan |
+| Email | alex.morgan@gmail.com |
+| Password | anything you choose |
+
+**Say:** "Patients self-register. Each gets their own isolated Cognee dataset."
+
+---
+
+### Message 1 — Symptom
+**Type:**
+```
+I've been having headaches for the past 3 days, mostly in the morning. The pain is moderate, around my temples.
 ```
 
-### Step 2.2: Deploy Node.js and Global OpenClaw
+**Say while waiting:** "This calls `cognee.remember()` with our healthcare ontology — Gemini extracts a Symptom node into the graph."
 
-OpenClaw coordinates our automated post-call transcription extraction and manages local WhatsApp messaging loops. Install Node.js followed by the openclaw package utility globally on your machine:
+**Point out:** Entity tags on the response (if shown). Companion acknowledges the headache.
 
-```shell
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install -y nodejs
-sudo npm install -g openclaw
+---
+
+### Message 2 — Medication
+**Type:**
+```
+I started taking ibuprofen 400mg twice daily for the headaches.
 ```
 
-Make sure the `gog binary` is available so OpenClaw skills can reference calendar operations down the line.
+**Say:** "Cognee links Medication → treats → Symptom. Not just text storage — a relationship in the graph."
 
-### Step 2.3: Clone the Project Repository and Install Dependencies
+---
 
-Instead of building folders manually, pull down the integration repository directly onto your system:
-
-```shell
-git clone https://github.com/harshal-ships/Appoint-booking-agent-with-OpenClaw.git
-cd Appoint-booking-agent-with-OpenClaw/"appointment booking agent"
+### Message 3 — Mood
+**Type:**
+```
+I've been feeling stressed about work deadlines and not sleeping well, maybe 5 hours a night.
 ```
 
-Initialize an isolated virtual workspace utilizing Python 3.12, activate it, and update your project library requirements:
+---
 
-```shell
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+### Message 4 — Observation
+**Type:**
+```
+I noticed my blood pressure was 140/90 when I checked at the pharmacy yesterday.
 ```
 
-### Step 2.4: Authenticate gog on the Server (Headless Remote OAuth Flow)
+---
 
-Without a functioning Google Calendar bridge, your agent will completely fail to process write instructions or track appointments. The gog CLI utility provides a remote OAuth integration mechanism designed specifically for headless SSH servers.
-
-First, open your Google Cloud Console, generate an OAuth credential key configuration pinned to the Desktop app client type, download the credential file, and upload it to your instance directory as `~/client_secret.json`.
-
-On your server terminal, initialize the application tracking key:
-
-```shell
-gog auth credentials set ~/client_secret.json --client healthfirst
+### Message 5 — Pattern (optional)
+**Type:**
+```
+The headaches seem worse on days when I sleep less than 6 hours.
 ```
 
-Now, initialize Step 1 of the headless remote authorization loop to print out your target sign-in URL string:
+---
 
-Bash
-
-```shell
-gog auth add clinic@gmail.com --client healthfirst --services calendar --remote --step 1
+### Ask about history
+**Type:**
+```
+Is there a connection between my sleep and headaches?
 ```
 
-Copy that full printed URL address, open it on your phone or any external web browser, sign in using your clinic's Google account, and grant access tokens. The web page will eventually redirect to a local or broken address (such as [`http://127.0.0.1`](http://127.0.0.1)`...` or [`http://localhost`](http://localhost)`...`): this is completely normal. Copy that complete redirected URL out of your browser's address bar.
+**Say:** "This is `cognee.recall()` — graph-backed retrieval, not keyword search. Click the response to show **Supporting Memories** in the sidebar."
 
-Return to your server terminal and initialize Step 2, wrapping the captured redirect string inside single quotes to complete verification:
+**Point out:** Citations / memories used panel.
 
-```shell
-gog auth add clinic@gmail.com --client healthfirst --services calendar --remote --step 2 --auth-url 'PASTE_THE_FULL_REDIRECT_URL_HERE'
+---
+
+### Memory Explorer (patient view)
+**Tab A → My Memory**
+
+**Say:** "Patients can inspect what's remembered — nodes for symptoms, medications, mood, observations."
+
+Click **Improve Memory** (optional):
+**Say:** "`cognee.improve()` enriches the graph and discovers new relationships."
+
+---
+
+## Act 3 — Doctor pre-visit brief (2 min)
+
+**Tab B → Staff Login**
+
+| Field | Value |
+|-------|-------|
+| Email | john@continuecare.com |
+| Password | continuecare |
+
+**Say:** "Doctors can't self-register — only hospital staff with @continuecare.com emails on the roster."
+
+**Tab B → Patients → select Alex Morgan**
+
+**Tab B → Doctor Brief → Generate Brief**
+
+**Say while waiting:** "Five focused `recall()` sub-queries hit the graph — symptoms, meds, mood, observations, correlations — then synthesize a brief with citations."
+
+**Point out:**
+- Symptom progression
+- Medication history
+- Mood trends
+- **Citations & Evidence** section — every claim tied to stored memory
+
+**Tab B → Memory Explorer** (read-only for doctors):
+**Say:** "Doctors see the same knowledge graph — relationships visible, not a black-box summary."
+
+---
+
+## Act 4 — Forgetting proves real deletion (1 min)
+
+**Tab A → My Memory → Clear Memory → confirm**
+
+**Tab A → My Health Companion**
+
+**Type:**
+```
+What symptoms have I reported?
 ```
 
-Verify your configuration tokens are communicating correctly with Google by printing your active calendars list:
+**Say:** "`cognee.forget()` removed the dataset. The companion no longer recalls headaches or ibuprofen — memory actually changed, not hidden."
 
-```shell
-gog calendar calendars --json
+---
+
+## Act 5 — Cognee recap (30 sec)
+
+**Say:**
+> "We used the full Cognee lifecycle:
+> - **remember** — structured extraction into a healthcare graph
+> - **recall** — graph-grounded companion + doctor brief
+> - **improve** — relationship enrichment
+> - **forget** — true deletion
+>
+> That's continuity of care — memory that evolves, connects, and can be trusted."
+
+---
+
+## Quick reference — copy/paste messages
+
+```
+I've been having headaches for the past 3 days, mostly in the morning. The pain is moderate, around my temples.
+
+I started taking ibuprofen 400mg twice daily for the headaches.
+
+I've been feeling stressed about work deadlines and not sleeping well, maybe 5 hours a night.
+
+I noticed my blood pressure was 140/90 when I checked at the pharmacy yesterday.
+
+The headaches seem worse on days when I sleep less than 6 hours.
+
+Is there a connection between my sleep and headaches?
+
+What symptoms have I reported?
 ```
 
-### Step 2.5: Link Your WhatsApp Account via OpenClaw
+## Login credentials
 
-To link your messaging backend directly with a phone number, run OpenClaw's interactive terminal login sequence:
+| Role | Email | Password |
+|------|-------|----------|
+| Patient | alex.morgan@gmail.com | (your choice at register) |
+| Doctor | john@continuecare.com | continuecare |
 
-```plaintext
-openclaw channels login --channel whatsapp
-```
+Other staff: sarah.chen@, michael.patel@, emily.rivera@, david.okonkwo@ — all `@continuecare.com`, password `continuecare`.
 
-The terminal will instantly generate a text QR code directly within your command line interface. Open WhatsApp on your phone, go to Linked Devices, choose Link a Device and scan the terminal screen to hook up your communication links safely.
+---
 
-### Step 2.6: Populate Your Environment Control File
+## Troubleshooting
 
-Generate your configuration mapping file (nano .env) to shield necessary authorization credentials:
-
-```shell
-WSS_API_KEY=your_agentao_voice_token WSS_CONNECTOR_UUID=your_agentao_connector_id GOOGLE_API_KEY=your_google_ai_studio_key GOOGLE_CALENDAR_ID=primary 
-GOG_ACCOUNT=clinic@gmail.com
-```
-
-### Step 2.7: Direct Terminal Process Execution
-
-To run the entire system layout, you do not need to deal with complex Linux service wrappers. Simply open two separate terminal tabs to launch your active framework scripts directly:
-
-In your **first tab**, activate your long-running messaging gateway server to process outbound text payloads:
-
-```shell
-openclaw gateway
-```
-
-In your **second tab**, source your python environment and activate your inbound voice agent listener directly:
-
-```shell
-source .venv/bin/activate
-python booking_agent.py
-```
-
-![](https://cdn.hashnode.com/uploads/covers/650a840758b09d1fee8d8588/105cd8c6-0a22-4fd4-9b8a-f5c7a09a9584.png align="center")
-
-## 3\. Reviewing Post-Call Output Artifacts
-
-The moment a patient concludes their call session, the asynchronous controller processes the transcript automatically, executing calendar updates and triggering targeted alerts.
-
-### Verified Google Calendar Bookings
-
-When a scheduling request passes validation checks, the deterministic backend issues a command via the gog tool to write a secure entry directly into the calendar. This safely registers the appointment details and links the unique call tracking identifier.
-
-![](https://cdn.hashnode.com/uploads/covers/650a840758b09d1fee8d8588/d120532f-8161-48b9-84d9-9883d0fadde1.png align="center")
-
-### Dual-Audience WhatsApp Notifications
-
-Text delivery routes messaging payload output precisely according to the client's explicit opt-in statements gathered during the live interaction:
-
-*   **The Patient Booking Receipt (Opt-In Dependent):** If the user agreed to receive updates on WhatsApp, the platform parses their number into an E.164 string format and routes a concise confirmation receipt summarizing their appointment type, date, and clinic arrival time.
-    
-*   **The Clinic Operations Summary (Mandatory Alert):** a diagnostic summary is sent straight to the clinic's office device. This diagnostic message outputs validation status, customer details, and call metrics so the team always stays in the loop.
-    
-
-![](https://cdn.hashnode.com/uploads/covers/650a840758b09d1fee8d8588/2c6e70c0-11d9-4e67-8ed7-1b800dce6062.jpg align="center")
-
-## 4\. Wrapping Up and Experimenting
-
-One of the best things about this decoupled architecture is how customizable it is. Because the real-time dialogue boundaries are isolated within standard environment strings inside `booking_agent.py`, you can jump straight into `CLAUDIA_SYSTEM_PROMPT` to tweak the phrasing, inject customized clinic policies, adjust voice characteristics, or add regional localization variables. You can refactor the voice behavior endlessly without breaking a single line of your downstream text processing or calendar storage blocks.
-
-Give this configuration a spin on your server instances, try varying the system prompts, and see how the background automation behaves. If you hit any friction points or discover ways to sharpen the scheduling logic, drop a comment below or open an issue on the repository. Any community feedback or implementation reviews are highly appreciated as we build out better conversational infrastructure patterns!
-
-### References
-
-*   [AgenTao SDK Documentation](https://docs.agentao.com/)
-    
-*   [OpenClaw Documentation](https://docs.openclaw.ai/)
-    
-*   [Gemini Documentation](https://ai.google.dev/gemini-api/docs/live-api)
-    
-*   You can find the complete implementation, environment guides, and repository configuration files here: [https://github.com/harshal-ships/Appoint-booking-agent-with-OpenClaw](https://github.com/harshal-ships/Appoint-booking-agent-with-OpenClaw)
+| Issue | Fix |
+|-------|-----|
+| 401 after server restart | Log in again (sessions are in-memory) |
+| First message slow | Normal — Cognee ingesting + cognifying |
+| Empty doctor brief | Patient must send messages first |
+| 500 on message | Check `backend/.env` has valid Gemini keys |
