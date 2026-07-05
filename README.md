@@ -1,18 +1,41 @@
 # ContinueCare.ai — Demo Script (~7 minutes)
+ ContinueCare.ai
 
-Use **two browser windows**: Tab A = Patient, Tab B = Doctor (incognito is fine).
+## The Problem
 
-**Before you start**
-```bash
-# Terminal 1
-cd backend && source venv/bin/activate && uvicorn app.main:app --reload --port 8000
+Healthcare conversations lose context.
 
-# Terminal 2
-cd frontend && npm run dev
-```
-Open http://localhost:5173
+Patients repeat the same symptoms at every visit. Doctors rarely see how conditions develop over weeks or months. Chat history and simple vector search store text, but they do not understand relationships — that a headache worsens on poor-sleep nights, that ibuprofen was started for that headache, or that stress and mood shifted at the same time.
 
-> **Note:** The first patient message takes 15–30 seconds while Cognee builds the knowledge graph.
+There is no evolving memory that connects events, surfaces trends, and gives clinicians an evidence-backed picture before the appointment.
+
+## What ContinueCare.ai Does
+
+ContinueCare.ai is a hospital-grade continuity-of-care memory system. Patients log symptoms, medications, mood, and observations through a conversational companion. Doctors receive pre-visit briefs grounded in stored memory — not generic LLM summaries.
+
+Memory improves over time: entities are linked in a knowledge graph, patterns emerge, and forgotten information truly disappears from retrieval.
+
+---
+
+## How We Leverage Cognee
+
+[Cognee](https://www.cognee.ai/) is the memory engine behind everything. We use it for the full memory lifecycle — not as a chat wrapper around an LLM.
+
+| Cognee capability | What it solves | How we use it |
+|-------------------|----------------|---------------|
+| **`remember()` + custom `graph_model`** | Plain text notes don't capture structure | Every patient message runs through `remember()` with a healthcare `DataPoint` ontology (`HealthRecord`, `Symptom`, `Medication`, `MoodEntry`, `Observation`). Gemini extracts entities and edges — e.g. `Medication.treats → Symptom` — into a per-patient knowledge graph (`patient_{uuid}` dataset). |
+| **`recall()` with graph completion** | Chatbots forget and hallucinate without grounding | The patient companion calls `recall()` with a clinical system prompt. Cognee auto-routes to graph-backed retrieval so answers reference prior symptoms, meds, and mood — not just the latest message. |
+| **`recall()` multi-query decomposition** | One broad question misses nuance | Doctor briefs run five focused sub-queries (symptoms, medications, mood, observations, correlations). Each hits the graph separately; results are synthesized with citations from stored memory. |
+| **`improve()`** | Memory stays flat unless enriched | Patients trigger `improve()` to bridge session data into permanent memory, discover new entity relationships, and build a global context index for richer retrieval. |
+| **`forget()`** | Deletion must be real, not cosmetic | Patients can clear their dataset. After `forget()`, `recall()` no longer surfaces removed data — proving memory actually changed. |
+| **Knowledge graph + vectors together** | Vector search alone misses structure | Cognee stores both graph relationships and embeddings. We visualize the graph in Memory Explorer and use `SearchType.CHUNKS` + `get_schema_inventory()` to show what is remembered and how entities connect. |
+| **Session memory** | Short-term context within a conversation | Session-scoped `remember()` keeps recent chat available for fast retrieval while permanent graph memory builds in the background. |
+
+**Why Cognee instead of chat history or RAG alone?**
+
+- Chat history is linear — it cannot traverse `symptom → medication → mood` relationships.
+- Vector search finds similar text — it does not model that sleep dropped to 5 hours *before* headaches worsened.
+- Cognee builds a **structured, evolving knowledge graph** per patient, then retrieves with graph-aware completion — which is exactly what continuity of care requires.
 
 ---
 
