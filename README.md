@@ -1,5 +1,4 @@
-# ContinueCare.ai — Demo Script (~7 minutes)
- ContinueCare.ai
+# ContinueCare.ai
 
 ## The Problem
 
@@ -39,185 +38,236 @@ Memory improves over time: entities are linked in a knowledge graph, patterns em
 
 ---
 
-## Act 1 — The Problem (30 sec, talk track)
+## Architecture
 
-**Say:**
-> "Patients repeat the same story every visit. Doctors don't see trends over weeks. Chat history is linear — it can't connect headaches, sleep, meds, and mood. ContinueCare.ai uses Cognee to build an evolving knowledge graph per patient."
+```
+┌─────────────────────┐       ┌────────────────────────────────┐
+│   React Frontend    │──────▶│       FastAPI Backend          │
+│                     │       │                                │
+│ • Patient Companion │       │  ┌──────────────────────────┐  │
+│ • Doctor Brief      │       │  │   Cognee Memory Engine   │  │
+│ • Memory Explorer   │       │  │                          │  │
+│ • Knowledge Graph   │       │  │  remember() → KG build   │  │
+│                     │       │  │  recall()   → retrieval   │  │
+└─────────────────────┘       │  │  improve()  → enrichment  │  │
+                              │  │  forget()   → deletion    │  │
+                              │  └──────────┬───────────────┘  │
+                              │             │                  │
+                              │  ┌──────────▼───────────────┐  │
+                              │  │  Healthcare Ontology      │  │
+                              │  │  (DataPoint subclasses)   │  │
+                              │  │                          │  │
+                              │  │  HealthRecord            │  │
+                              │  │  ├── Symptom             │  │
+                              │  │  ├── Medication ─treats─▶│  │
+                              │  │  ├── MoodEntry           │  │
+                              │  │  └── Observation         │  │
+                              │  └──────────────────────────┘  │
+                              └────────────────────────────────┘
+```
+
+### Cognee Features Used
+
+| Feature | How It's Used |
+|---------|---------------|
+| `remember()` with `graph_model` | Extracts structured health entities (symptoms, medications, mood, observations) from patient messages into the knowledge graph |
+| `recall()` with `GRAPH_COMPLETION` | Generates contextual companion responses grounded in stored memory |
+| `recall()` multi-query | Decomposes doctor brief generation into focused sub-queries for comprehensive summaries |
+| `improve()` | Enriches the knowledge graph with new relationships and builds global context index |
+| `forget()` | Removes patient data from graph and vector stores, proving true deletion |
+| Custom `DataPoint` ontology | Healthcare-specific schema constraining LLM extraction to domain entities |
+| Session memory | Stores conversation context for short-term retrieval |
+| `SearchType.CHUNKS` | Raw chunk retrieval for knowledge graph visualization |
+| `get_schema_inventory()` | Memory inventory showing entity types and counts |
+
+### Healthcare Ontology
+
+The custom ontology (defined as `DataPoint` subclasses) constrains how Cognee's LLM
+extraction builds the knowledge graph:
+
+- **HealthRecord** — root extraction node, connects to all entity types
+- **Symptom** — name, severity, body location, duration, frequency
+- **Medication** — name, dosage, frequency, purpose; `treats` → Symptom (edge)
+- **MoodEntry** — emotional state, intensity, triggers; `associated_symptoms` → Symptom
+- **Observation** — measurable findings with category (vital sign, lab result, etc.)
 
 ---
 
-## Act 2 — Patient builds memory (3 min)
+## Hospital Access Model
 
-**Tab A → Register → Patient**
+ContinueCare.ai is built as a hospital product with role-based access:
 
-| Field | Value |
-|-------|-------|
-| Name | Alex Morgan |
-| Email | alex.morgan@gmail.com |
-| Password | anything you choose |
+| Role | How to access | Can access |
+|------|-------------|------------|
+| **Patient** | Self-register on the login screen | Own health companion, own memory only |
+| **Doctor** | Staff login with `@continuecare.com` email (hospital-provisioned) | All registered patients, briefs, memory graphs |
 
-**Say:** "Patients self-register. Each gets their own isolated Cognee dataset."
+### Hospital staff (login only — cannot register)
 
----
+| Doctor | Specialization | Email | Default password |
+|--------|----------------|-------|------------------|
+| Dr. John Multispecialist | Multispecialist | john@continuecare.com | `continuecare` |
+| Dr. Sarah Chen | Cardiology | sarah.chen@continuecare.com | `continuecare` |
+| Dr. Michael Patel | Neurology | michael.patel@continuecare.com | `continuecare` |
+| Dr. Emily Rivera | Pediatrics | emily.rivera@continuecare.com | `continuecare` |
+| Dr. David Okonkwo | Internal Medicine | david.okonkwo@continuecare.com | `continuecare` |
 
-### Message 1 — Symptom
-**Type:**
-```
-I've been having headaches for the past 3 days, mostly in the morning. The pain is moderate, around my temples.
-```
+Override the staff password with `HOSPITAL_DOCTOR_PASSWORD` in `backend/.env`.
 
-**Say while waiting:** "This calls `cognee.remember()` with our healthcare ontology — Gemini extracts a Symptom node into the graph."
+### How it works
 
-**Point out:** Entity tags on the response (if shown). Companion acknowledges the headache.
+1. **Patient registers** at the login screen → logs symptoms, medications, mood via the companion
+2. Data is stored in Cognee under that patient's unique ID (`patient_{uuid}`)
+3. **Doctor logs in** with a hospital `@continuecare.com` account → sees a **Patients** list
+4. Doctor selects a patient → generates a **Doctor Brief** or views their **Memory Explorer**
+5. Patients cannot see other patients' data; only provisioned hospital staff can access doctor views
 
----
+Auth uses session tokens (`Authorization: Bearer <token>`). User accounts are stored in `backend/data/users.json`.
 
-### Message 2 — Medication
-**Type:**
-```
-I started taking ibuprofen 400mg twice daily for the headaches.
-```
+### Demo flow
 
-**Say:** "Cognee links Medication → treats → Symptom. Not just text storage — a relationship in the graph."
-
----
-
-### Message 3 — Mood
-**Type:**
-```
-I've been feeling stressed about work deadlines and not sleeping well, maybe 5 hours a night.
+```bash
+# Terminal 1 — register as patient in browser, log a few symptoms
+# Terminal 2 — register as doctor, open Patients tab, select that patient, Generate Brief
 ```
 
 ---
 
-### Message 4 — Observation
-**Type:**
+## Setup
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- AWS account with Bedrock model access (Nova Lite + Titan Embeddings)
+- AWS credentials configured in `backend/.env` (see `.env.example`)
+
+### Backend
+
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Configure AWS Bedrock credentials
+cp .env.example .env
+# Edit .env — set AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
 ```
-I noticed my blood pressure was 140/90 when I checked at the pharmacy yesterday.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
 ```
 
 ---
 
-### Message 5 — Pattern (optional)
-**Type:**
+## Running
+
+Start both servers (in separate terminals):
+
+```bash
+# Terminal 1: Backend
+cd backend
+source venv/bin/activate
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2: Frontend
+cd frontend
+npm run dev
 ```
-The headaches seem worse on days when I sleep less than 6 hours.
-```
+
+Open http://localhost:5173
 
 ---
 
-### Ask about history
-**Type:**
-```
-Is there a connection between my sleep and headaches?
-```
+## Demo Script
 
-**Say:** "This is `cognee.recall()` — graph-backed retrieval, not keyword search. Click the response to show **Supporting Memories** in the sidebar."
+**Full presenter script (7 min, two tabs, copy-paste lines):** see [DEMO_SCRIPT.md](./DEMO_SCRIPT.md)
 
-**Point out:** Citations / memories used panel.
+Quick version below:
 
----
+## Demo Walkthrough
 
-### Memory Explorer (patient view)
-**Tab A → My Memory**
+### 1. Patient Companion — Building Memory
 
-**Say:** "Patients can inspect what's remembered — nodes for symptoms, medications, mood, observations."
+Record several health entries to build the knowledge graph:
 
-Click **Improve Memory** (optional):
-**Say:** "`cognee.improve()` enriches the graph and discovers new relationships."
+> "I've been having headaches for the past 3 days, mostly in the morning. The pain is moderate, around the temples."
 
----
+> "I started taking ibuprofen 400mg twice daily for the headaches."
 
-## Act 3 — Doctor pre-visit brief (2 min)
+> "My mood has been low lately. I've been feeling stressed about work deadlines and not sleeping well."
 
-**Tab B → Staff Login**
+> "I noticed my blood pressure was 140/90 when I checked at the pharmacy yesterday."
 
-| Field | Value |
-|-------|-------|
-| Email | john@continuecare.com |
-| Password | continuecare |
+> "The headaches seem worse on days when I sleep less than 6 hours."
 
-**Say:** "Doctors can't self-register — only hospital staff with @continuecare.com emails on the roster."
+Each message extracts entities into the knowledge graph. The companion references
+past entries when responding.
 
-**Tab B → Patients → select Alex Morgan**
+### 2. Ask About History
 
-**Tab B → Doctor Brief → Generate Brief**
+> "What symptoms have I reported?"
 
-**Say while waiting:** "Five focused `recall()` sub-queries hit the graph — symptoms, meds, mood, observations, correlations — then synthesize a brief with citations."
+> "Is there any pattern between my sleep and headaches?"
 
-**Point out:**
-- Symptom progression
-- Medication history
-- Mood trends
-- **Citations & Evidence** section — every claim tied to stored memory
+> "What medications am I currently taking?"
 
-**Tab B → Memory Explorer** (read-only for doctors):
-**Say:** "Doctors see the same knowledge graph — relationships visible, not a black-box summary."
+The system recalls from the knowledge graph, demonstrating semantic retrieval
+beyond simple keyword matching.
 
----
+### 3. Doctor Brief — Evidence-Based Summary
 
-## Act 4 — Forgetting proves real deletion (1 min)
+Switch to the Doctor Brief tab and generate a summary. The brief includes:
+- Symptom progression with timeline
+- Medication history with effectiveness
+- Mood trends and correlations
+- Citations linking each finding to stored memory
 
-**Tab A → My Memory → Clear Memory → confirm**
+### 4. Memory Explorer — Graph Visualization
 
-**Tab A → My Health Companion**
+View the knowledge graph to see how entities are connected:
+- Symptom nodes (red)
+- Medication nodes (blue)
+- Mood nodes (purple)
+- Observation nodes (green)
+- HealthRecord nodes (amber)
 
-**Type:**
-```
-What symptoms have I reported?
-```
+Use "Improve Memory" to trigger Cognee's enrichment pipeline.
 
-**Say:** "`cognee.forget()` removed the dataset. The companion no longer recalls headaches or ibuprofen — memory actually changed, not hidden."
+### 5. Forgetting — Proving Deletion
 
----
-
-## Act 5 — Cognee recap (30 sec)
-
-**Say:**
-> "We used the full Cognee lifecycle:
-> - **remember** — structured extraction into a healthcare graph
-> - **recall** — graph-grounded companion + doctor brief
-> - **improve** — relationship enrichment
-> - **forget** — true deletion
->
-> That's continuity of care — memory that evolves, connects, and can be trusted."
+Click "Forget All" in the Memory Explorer. Then return to the companion
+and ask about previous symptoms — the system will no longer remember them.
+This proves that `cognee.forget()` truly removes data from the graph and
+vector stores, not just hiding it.
 
 ---
 
-## Quick reference — copy/paste messages
+## API Endpoints
 
-```
-I've been having headaches for the past 3 days, mostly in the morning. The pain is moderate, around my temples.
-
-I started taking ibuprofen 400mg twice daily for the headaches.
-
-I've been feeling stressed about work deadlines and not sleeping well, maybe 5 hours a night.
-
-I noticed my blood pressure was 140/90 when I checked at the pharmacy yesterday.
-
-The headaches seem worse on days when I sleep less than 6 hours.
-
-Is there a connection between my sleep and headaches?
-
-What symptoms have I reported?
-```
-
-## Login credentials
-
-| Role | Email | Password |
-|------|-------|----------|
-| Patient | alex.morgan@gmail.com | (your choice at register) |
-| Doctor | john@continuecare.com | continuecare |
-
-Other staff: sarah.chen@, michael.patel@, emily.rivera@, david.okonkwo@ — all `@continuecare.com`, password `continuecare`.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/patient/message` | Send a patient message, extract entities, recall response |
+| POST | `/api/doctor/brief` | Generate a pre-visit clinical summary |
+| POST | `/api/memory/improve` | Trigger knowledge graph enrichment |
+| POST | `/api/memory/forget` | Delete memory (all or by dataset) |
+| GET | `/api/memory/graph` | Retrieve graph nodes and edges for visualization |
+| GET | `/api/memory/inventory` | Get entity type counts and samples |
+| GET | `/api/health` | Health check |
 
 ---
 
-## Troubleshooting
+## Technology Choices
 
-| Issue | Fix |
-|-------|-----|
-| 401 after server restart | Log in again (sessions are in-memory) |
-| First message slow | Normal — Cognee ingesting + cognifying |
-| Empty doctor brief | Patient must send messages first |
-| 500 on message | Check `backend/.env` has valid Gemini keys |
+| Technology | Justification |
+|------------|---------------|
+| **Cognee v1.2** | Core memory engine — knowledge graph, semantic retrieval, memory lifecycle |
+| **FastAPI** | Async Python framework matching Cognee's async API |
+| **React + TypeScript** | Type-safe component architecture for complex UI |
+| **Tailwind CSS v4** | Utility-first styling for rapid, consistent UI development |
+| **react-force-graph-2d** | Interactive knowledge graph visualization |
+| **LanceDB + Ladybug** (via Cognee) | Embedded vector + graph storage — zero-config local demo |
